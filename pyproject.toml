@@ -1,0 +1,26 @@
+[project]
+name = "aporiagen"
+version = "0.0.1"
+description = "A program which generates random programs in the Aporia language"
+authors = [{ name = "Ephraim Siegfried", email = "ephraim.siegfried@hotmail.com" }]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "aporia-interpreter>=0.1.12",
+]
+
+[project.scripts]
+aporiagen = "aporiagen.main:main"
+
+[build-system]
+requires = ["setuptools", "wheel", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# https://github.com/astral-sh/uv/issues/9513
+license-files = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+]
