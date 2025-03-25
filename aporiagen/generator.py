@@ -106,8 +106,8 @@ class Generator:
                     op = random.choice(list(aporia_ast.UnaryNumOperator.__subclasses__()))
                 return aporia_ast.UnaryOp(op(), exp)
             case aporia_ast.BinOp:
-                left = self.generate_expr(aporia_ast.Exp, type)
-                right = self.generate_expr(aporia_ast.Exp, type)
+                left_type = type
+                right_type = type
                 if type == aporia_ast.Bool:
                     if random.random() < 0.5:
                         cmp = random.choice(aporia_ast.Comparator.__subclasses__())
@@ -120,7 +120,13 @@ class Generator:
                     op_types = [aporia_ast.Add, aporia_ast.Sub, aporia_ast.Mult, aporia_ast.FloorDiv, aporia_ast.Mod]
                 else:
                     op_types = [aporia_ast.Add, aporia_ast.Sub, aporia_ast.Mult, aporia_ast.Div]
+                    if random.random() < 0.5:
+                        left_type = random.choice((aporia_ast.Int, aporia_ast.Float))
+                    if left_type == aporia_ast.Float and random.random() < 0.5:
+                        right_type = random.choice((aporia_ast.Int, aporia_ast.Float))
                 op = random.choice(op_types)
+                left = self.generate_expr(aporia_ast.Exp, left_type)
+                right = self.generate_expr(aporia_ast.Exp, right_type)
                 return aporia_ast.BinOp(left, op(), right)
             case _:
                 raise Exception("Unexpected input " + repr(expr))
