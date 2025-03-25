@@ -1,6 +1,6 @@
 [project]
 name = "aporiagen"
-version = "0.0.1"
+version = "0.0.2"
 description = "A program which generates random programs in the Aporia language"
 authors = [{ name = "Ephraim Siegfried", email = "ephraim.siegfried@hotmail.com" }]
 readme = "README.md"
