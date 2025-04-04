@@ -1,17 +1,19 @@
+import random
 from collections import defaultdict
-from aporia import aporia_ast
+
 from aporia.parser import parser
 from aporiagen.counter import count_objects
-import random
+import aporia.aporia_ast as ast
+
 
 class Generator:
-    def __init__(self, program:str=None, num_stmts:int=None):
+    def __init__(self, program: str = None, num_stmts: int = None):
         if not program and not num_stmts:
             raise ValueError("Must provide either program or num_instr")
         if program:
             self.program_ast = parser.parse(program)
             self.count = count_objects(self.program_ast)
-            self.num_instr = self.count[aporia_ast.Stmt]
+            self.num_instr = self.count[ast.Stmt]
         else:
             self.num_instr = num_stmts
         self.type_to_vars = defaultdict(set)
@@ -21,112 +23,237 @@ class Generator:
         statements = []
         self.type_to_vars = defaultdict(set)
         self.num_vars = 0
+
+        # Generate Instructions
         for i in range(self.num_instr):
-            statements.append(self.generate_stmt(aporia_ast.Stmt))
+            statements.append(self.generate_stmt(ast.Stmt))
+
+        # Generate Declarations
         declarations = []
-        for type, variables in self.type_to_vars.items():
-            variables = {aporia_ast.Var(v) for v in variables}
+        for typ, variables in self.type_to_vars.items():
+            variables = {ast.Var(v) for v in variables}
             if len(variables) > 0:
-                declarations.append(aporia_ast.Declar(type(), variables))
-        return aporia_ast.L_cfi(declarations, statements)
+                declarations.append(ast.Declar(typ(), variables))
+
+        generated_prog = ast.L_cfi(declarations, statements)
+        gen_count = count_objects(generated_prog)
+        inp_count = count_objects(self.program_ast)
+        print(dict(gen_count))
+        print({k:inp_count[k] - gen_count[k] for k in inp_count})
+        return generated_prog
 
     def generate_variable(self):
         self.num_vars += 1
         return f"var_{self.num_vars}"
 
-    def generate_stmt(self, stmt):
-        types = [aporia_ast.Int, aporia_ast.Bool, aporia_ast.Float]
-        match stmt:
-            case aporia_ast.Stmt:
-                pred = self.generate_stmt(aporia_ast.Pred)
-                inst = self.generate_stmt(aporia_ast.Inst)
-                assert inst is not None
-                return aporia_ast.Stmt(None, pred, inst)
-            case aporia_ast.Inst:
-                return self.generate_stmt(random.choice(aporia_ast.Inst.__subclasses__()))
-            case aporia_ast.Pred:
-                exp_type = random.choice((aporia_ast.Bools, aporia_ast.Var))
-                if exp_type == aporia_ast.Bools or len(self.type_to_vars[aporia_ast.Bool]) == 0:
-                    return aporia_ast.Bools(True)
-                exp = self.generate_expr(exp_type, aporia_ast.Bool)
-                return aporia_ast.Pred(exp)
-            case aporia_ast.PrintInst:
-                type = random.choice(types)
-                exp = self.generate_expr(aporia_ast.Exp, type)
-                return aporia_ast.PrintInst("", exp)
-            case aporia_ast.AssignInst:
-                var_to_type = {var: t for t, vars_set in self.type_to_vars.items() for var in vars_set}
-                if random.random() < 0.5 and len(var_to_type) > 0:
-                    var = random.choice(list(var_to_type.keys()))
-                    type = var_to_type[var]
-                    exp = self.generate_expr(aporia_ast.Exp, type)
-                else:
-                    name = self.generate_variable()
-                    type = random.choice(types)
-                    var = aporia_ast.Var(name)
-                    exp = self.generate_expr(aporia_ast.Exp, type)
-                    self.type_to_vars[type].add(name)
-                return aporia_ast.AssignInst(aporia_ast.Assign(var, exp))
-            case aporia_ast.ExpInst:
-                type = random.choice(types)
-                exp = self.generate_expr(aporia_ast.Exp, type)
-                return aporia_ast.ExpInst(exp)
-            case _:
-                raise Exception("Unexpected input " + repr(stmt))
+    def generate_random_type_expression(self):
+        types = [t for t in ast.Type.__subclasses__()]
+        random.shuffle(types)
+        for t in types:
+            exp = self.generate_expr(ast.Exp, t)
+            if exp is not None:
+                return exp, t
+        return None, None
 
-    def generate_expr(self, expr, type):
+    def generate_stmt(self, obj_type):
+        if obj_type not in [ast.Inst] and self.count[obj_type] == 0:
+            return None
+        self.count[obj_type] -= 1
+        match obj_type:
+            case ast.Stmt:
+                pred = self.generate_stmt(ast.Pred)
+                if pred is None:
+                    self.count[obj_type] += 1
+                    return None
+                inst = self.generate_stmt(ast.Inst)
+                if inst is None:
+                    self.count[obj_type] += 1
+                    return None
+                return ast.Stmt(None, pred, inst)
+            case ast.Inst:
+                inst_types = [c for c in ast.Inst.__subclasses__() if self.count[c] > 0]
+                random.shuffle(inst_types)
+                for inst_type in inst_types:
+                    inst = self.generate_stmt(inst_type)
+                    if obj_type is not None:
+                        return inst
+                self.count[obj_type] += 1
+                return None
+            case ast.Pred:
+                exp_type = random.choice((ast.Bool, ast.Var))
+                if exp_type == ast.Bool or len(self.type_to_vars[ast.Bool]) == 0:
+                    return ast.Bools(True)  # TODO: Reconsider this
+                exp = self.generate_expr(exp_type, ast.Bool)
+                if exp is None:
+                    self.count[obj_type] += 1
+                    return None
+                return ast.Pred(exp)
+            case ast.PrintInst:
+                exp, _ = self.generate_random_type_expression()
+                if exp is None:
+                    self.count[obj_type] += 1
+                    return None
+                return ast.PrintInst("", exp)
+            case ast.AssignInst:
+                var_to_type = {
+                    var: t
+                    for t, vars_set in self.type_to_vars.items()
+                    for var in vars_set
+                }
+                # 1 is for generating new variables, 2 for reusing them
+                choices = ["gen", "reuse"] if len(var_to_type) > 0 else ["gen"]
+                random.shuffle(choices)
+                for choice in choices:
+                    if choice == "gen":
+                        name = self.generate_variable()
+                        var = ast.Var(name)
+                        exp, typ = self.generate_random_type_expression()
+                        if exp is None:
+                            self.count[obj_type] += 1
+                            return None
+                        self.type_to_vars[typ].add(name)
+                        return ast.AssignInst(ast.Assign(var, exp))
+                    else:
+                        var = random.choice(list(var_to_type.keys()))
+                        typ = var_to_type[var]
+                        exp = self.generate_expr(ast.Exp, typ)
+                        if exp is None:
+                            self.count[obj_type] += 1
+                            return None
+                        return ast.AssignInst(ast.Assign(var, exp))
+            case ast.ExpInst:
+                exp, _ = self.generate_random_type_expression()
+                if exp is None:
+                    self.count[obj_type] += 1
+                    return None
+                return ast.ExpInst(exp)
+            case _:
+                raise Exception("Unexpected input " + repr(obj_type))
+
+
+    def generate_expr(self, expr, output_type):
+        if expr != ast.Exp and not self.count[expr] > 0:
+            return None
+        self.count[expr] -= 1
         match expr:
-            case aporia_ast.ExpInst:
-                exp = self.generate_expr(aporia_ast.Exp, type)
-                return aporia_ast.ExpInst(exp)
-            case aporia_ast.Exp:
-                exp = [aporia_ast.Var, aporia_ast.BinOp, aporia_ast.UnaryOp,
-                       aporia_ast.Bools if type == aporia_ast.Bool else aporia_ast.Constant]
-                return self.generate_expr(random.choice(exp), type)
-            case aporia_ast.Var:
-                if len(self.type_to_vars[type]) == 0:
-                    return self.generate_expr(aporia_ast.Bools if type == aporia_ast.Bool else aporia_ast.Constant, type)
-                name = random.choice(list(self.type_to_vars[type]))
-                return aporia_ast.Var(name)
-            case aporia_ast.Constant:
-                assert type != aporia_ast.Bool
+            case ast.Exp:
+                exps = [ast.Var, ast.BinOp, ast.UnaryOp, ast.Bools if output_type == ast.Bool else ast.Constant]
+                exps = [e for e in exps if self.count[e] > 0]
+                random.shuffle(exps)
+                for exp_type in exps:
+                    e = self.generate_expr(exp_type, output_type)
+                    if e is not None:
+                        self.count[expr] += 1
+                        return e
+                return None
+            case ast.Var:
+                if len(self.type_to_vars[output_type]) == 0:
+                    self.count[expr] += 1
+                    return None
+                name = random.choice(list(self.type_to_vars[output_type]))
+                return ast.Var(name)
+            case ast.Constant:
+                if output_type == ast.Bool:
+                    self.count[expr] += 1
+                    return None
+                # TODO: Make range bigger (maybe calculate mean & variance of input program)
                 value = random.choice(list(range(1, 10)))
-                if type == aporia_ast.Float:
+                if output_type == ast.Float:
                     value = float(value)
-                return aporia_ast.Constant(value)
-            case aporia_ast.Bools:
-                assert type != aporia_ast.Int or type != aporia_ast.Float
+                return ast.Constant(value)
+            case ast.Bools:
+                if output_type == ast.Int or output_type == ast.Float:
+                    self.count[expr] += 1
+                    return None
                 value = random.choice((True, False))
-                return aporia_ast.Bools(value)
-            case aporia_ast.UnaryOp:
-                exp = self.generate_expr(aporia_ast.Exp, type)
-                if type == aporia_ast.Bool:
-                    op = random.choice(list(aporia_ast.UnaryBoolOperator.__subclasses__()))
+                return ast.Bools(value)
+            case ast.UnaryOp:
+                if output_type == ast.Bool:
+                    ops = list(ast.UnaryBoolOperator.__subclasses__())
                 else:
-                    op = random.choice(list(aporia_ast.UnaryNumOperator.__subclasses__()))
-                return aporia_ast.UnaryOp(op(), exp)
-            case aporia_ast.BinOp:
-                left_type = type
-                right_type = type
-                if type == aporia_ast.Bool:
-                    if random.random() < 0.5:
-                        cmp = random.choice(aporia_ast.Comparator.__subclasses__())
-                        type = random.choice((aporia_ast.Int, aporia_ast.Float))
-                        left = self.generate_expr(aporia_ast.Exp, type)
-                        right = self.generate_expr(aporia_ast.Exp, type)
-                        return aporia_ast.BinOp(left, cmp(), right)
-                    op_types = list(aporia_ast.BinaryBoolOperator.__subclasses__())
-                elif type == aporia_ast.Int:
-                    op_types = [aporia_ast.Add, aporia_ast.Sub, aporia_ast.Mult, aporia_ast.FloorDiv, aporia_ast.Mod]
+                    ops = list(ast.UnaryNumOperator.__subclasses__())
+                ops = [o for o in ops if self.count[o] > 0]
+                if not ops:
+                    self.count[expr] += 1
+                    return None
+                op = random.choice(ops)
+                self.count[op] -= 1
+                exp = self.generate_expr(ast.Exp, output_type)
+                if exp is None:
+                    self.count[expr] += 1
+                    self.count[op] += 1
+                    return None
+                return ast.UnaryOp(op(), exp)
+            case ast.BinOp:
+                if output_type == ast.Bool:
+                    choices = [ast.Comparator, ast.BinaryBoolOperator]
+                    random.shuffle(choices)
+                    for choice in choices:
+                        bin_op = self.generate_bin_op(choice, output_type)
+                        if bin_op is not None:
+                            return bin_op
+                    self.count[expr] += 1
+                    return None
                 else:
-                    op_types = [aporia_ast.Add, aporia_ast.Sub, aporia_ast.Mult, aporia_ast.Div]
-                    if random.random() < 0.5:
-                        left_type = random.choice((aporia_ast.Int, aporia_ast.Float))
-                    if left_type == aporia_ast.Float and random.random() < 0.5:
-                        right_type = random.choice((aporia_ast.Int, aporia_ast.Float))
-                op = random.choice(op_types)
-                left = self.generate_expr(aporia_ast.Exp, left_type)
-                right = self.generate_expr(aporia_ast.Exp, right_type)
-                return aporia_ast.BinOp(left, op(), right)
+                    bin_op = self.generate_bin_op(ast.BinaryNumOperator, output_type)
+                    if bin_op is not None:
+                        return bin_op
+                    self.count[expr] += 1
+                    return None
             case _:
                 raise Exception("Unexpected input " + repr(expr))
+
+    def generate_bin_op(self, bin_op_type, output_type):
+        def choose_expr(types):
+            random.shuffle(types)
+            for t in types:
+                expr = self.generate_expr(ast.Exp, t)
+                if expr is not None:
+                    return expr
+            return None
+
+        if bin_op_type is ast.Comparator:
+            ops = [c for c in ast.Comparator.__subclasses__() if self.count[c] > 0]
+            if not ops:
+                return None
+            op = random.choice(ops)
+            self.count[op] -= 1
+            left = choose_expr([ast.Int, ast.Float])
+            right = choose_expr([ast.Int, ast.Float]) if left else None
+        elif bin_op_type is ast.BinaryBoolOperator:
+            ops = [c for c in ast.BinaryBoolOperator.__subclasses__() if self.count[c] > 0]
+            if not ops:
+                return None
+            op = random.choice(ops)
+            self.count[op] -= 1
+            left = self.generate_expr(ast.Exp, ast.Bool)
+            right = self.generate_expr(ast.Exp, ast.Bool) if left else None
+        elif bin_op_type is ast.BinaryNumOperator and output_type == ast.Int:
+            ops = [o for o in [ast.Add, ast.Sub, ast.Mult, ast.FloorDiv, ast.Mod] if self.count[o] > 0]
+            if not ops:
+                return None
+            op = random.choice(ops)
+            self.count[op] -= 1
+            left = self.generate_expr(ast.Exp, ast.Int)
+            right = self.generate_expr(ast.Exp, ast.Int) if left else None
+        elif bin_op_type is ast.BinaryNumOperator and output_type == ast.Float:
+            ops = [o for o in [ast.Add, ast.Sub, ast.Mult, ast.Div] if self.count[o] > 0]
+            if not ops:
+                return None
+            op = random.choice(ops)
+            self.count[op] -= 1
+            # Ensure at least one operand is a float.
+            if random.choice([True, False]):
+                left = self.generate_expr(ast.Exp, ast.Float)
+                right = choose_expr([ast.Int, ast.Float]) if left else None
+            else:
+                left = choose_expr([ast.Int, ast.Float])
+                right = self.generate_expr(ast.Exp, ast.Float) if left else None
+        else:
+            raise Exception("Unexpected input " + repr(bin_op_type))
+
+        if left is None or right is None:
+            self.count[op] += 1
+            return None
+
+        return ast.BinOp(left, op(), right)
