@@ -1,6 +1,7 @@
+import random
 from collections import defaultdict
-
 from aporia.aporia_ast import *
+from aporia import aporia_ast
 from aporia.parser import parser
 
 class Counter:
@@ -45,6 +46,31 @@ class Counter:
             depths.append(count(statement))
         return max(depths)
 
+    def mean_and_variance_of_constants(self):
+        constants = []
+        def collect_constants(obj):
+            if type(obj) is aporia_ast.Constant:
+                constants.append(obj.value)
+            if hasattr(obj, '__dict__'):
+                for o in obj.__dict__.values():
+                    collect_constants(o)
+
+        for statement in self.program_ast.stmt:
+            collect_constants(statement)
+        if not constants:
+            return None, None
+        mean = sum(constants) / len(constants)
+        variance = sum((x - mean) ** 2 for x in constants) / len(constants)
+        return mean, variance
+
+
 if __name__ == "__main__":
-    c = Counter(file_path="test.spp")
+    code = """
+    true: 13
+    true: 14
+    """
+    c = Counter(source_code=code)
+
     print(c.max_depth())
+    mean , variance = c.mean_and_variance_of_constants()
+    print(random.gauss(mean, variance))

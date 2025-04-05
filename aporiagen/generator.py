@@ -8,7 +8,7 @@ import aporia.aporia_ast as ast
 
 
 class Generator:
-    def __init__(self, program: str = None, num_instr: int = None, depth: int = 8):
+    def __init__(self, program: str = None, num_instr: int = None):
         if not program and not num_instr:
             raise ValueError("Must provide either program or num_instr")
         if program:
@@ -18,9 +18,11 @@ class Generator:
             self.budget.update(c.variables())
             print(dict(self.budget))
             self.num_instr = self.budget[ast.Stmt]
+            self.mean, self.std = c.mean_and_variance_of_constants()
         else:
             self.num_instr = num_instr
             self.budget = defaultdict(lambda: 1000000000)
+            self.mean, self.std = 10, 100,
         self.type_to_vars = defaultdict(set)
         self.num_vars = 0
 
@@ -168,20 +170,19 @@ class Generator:
                     self.budget[expr_type] += 1
                     return None
                 # TODO: Make range bigger (maybe calculate mean & variance of input program)
-                value = random.choice(list(range(1, 10)))
+                value = random.gauss(self.mean, self.std)
                 if output_type == ast.Float:
                     if self.budget[float] <= 0:
                         self.budget[expr_type] += 1
                         return None
-                    value = float(value)
                     self.budget[float] -= 1
-                    return ast.Constant(value)
+                    return ast.Constant(truncate_float(value, 2))
                 else:
                     if self.budget[int] <= 0:
                         self.budget[expr_type] += 1
                         return None
                     self.budget[int] -= 1
-                    return ast.Constant(value)
+                    return ast.Constant(int(value))
             case ast.Bools:
                 if output_type == ast.Int or output_type == ast.Float or self.budget[bool] <= 0:
                     self.budget[expr_type] += 1
@@ -280,3 +281,7 @@ class Generator:
             return None
 
         return ast.BinOp(left, op(), right)
+
+def truncate_float(float_number, decimal_places):
+    multiplier = 10 ** decimal_places
+    return int(float_number * multiplier) / multiplier
