@@ -16,7 +16,7 @@ class Generator:
             c = Counter(program_ast=self.program_ast)
             self.budget = c.objects()
             self.budget.update(c.variables())
-            print(dict(self.budget))
+            # print(dict(self.budget))
             self.num_instr = self.budget[ast.Stmt]
             self.mean, self.std = c.mean_and_variance_of_constants()
         else:
@@ -170,7 +170,7 @@ class Generator:
                     self.budget[expr_type] += 1
                     return None
                 # TODO: Make range bigger (maybe calculate mean & variance of input program)
-                value = random.gauss(self.mean, self.std)
+                value = abs(random.gauss(self.mean, self.std))
                 if output_type == ast.Float:
                     if self.budget[float] <= 0:
                         self.budget[expr_type] += 1
