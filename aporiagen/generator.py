@@ -1,8 +1,9 @@
 import random
 from collections import defaultdict
+from types import NoneType
 
 from aporia.parser import parser
-from aporiagen.counter import count_objects
+from aporiagen.counter import count_objects, count_variables
 import aporia.aporia_ast as ast
 
 
@@ -13,6 +14,8 @@ class Generator:
         if program:
             self.program_ast = parser.parse(program)
             self.budget = count_objects(self.program_ast)
+            self.budget.update(count_variables(self.program_ast))
+            print(dict(self.budget))
             self.num_instr = self.budget[ast.Stmt]
         else:
             self.num_instr = num_instr
@@ -66,6 +69,7 @@ class Generator:
                 if inst is None:
                     self.budget[obj_type] += 1
                     return None
+                self.budget[NoneType] -= 1 # Because the label in Stmt is always None and also tracked
                 return ast.Stmt(None, pred, inst)
             case ast.Inst:
                 inst_types = [c for c in ast.Inst.__subclasses__() if self.budget[c] > 0]
@@ -77,9 +81,11 @@ class Generator:
                 self.budget[obj_type] += 1
                 return None
             case ast.Pred:
-                exp_type = random.choice((ast.Bool, ast.Var))
+                exp_type = random.choice((ast.Bools, ast.Var))
                 if exp_type == ast.Bool or len(self.type_to_vars[ast.Bool]) == 0:
-                    return ast.Pred(ast.Bools(True))  # TODO: Reconsider this
+                    exp = ast.Pred(ast.Bools(True))  # TODO: Reconsider this
+                    self.budget[ast.Bools] -= 1
+                    return exp
                 exp = self.generate_expr(exp_type, ast.Bool)
                 if exp is None:
                     self.budget[obj_type] += 1
@@ -97,17 +103,26 @@ class Generator:
                     for t, vars_set in self.type_to_vars.items()
                     for var in vars_set
                 }
-                # 1 is for generating new variables, 2 for reusing them
-                choices = ["gen", "reuse"] if len(var_to_type) > 0 else ["gen"]
+                choices = []
+                # Types that could be generated
+                gen_types = [typ for typ in ast.Type.__subclasses__() if self.budget[typ] > 0]
+                if gen_types:
+                    choices.append("gen")
+                if len(var_to_type) > 0:
+                    choices.append("reuse")
+
                 random.shuffle(choices)
                 for choice in choices:
                     if choice == "gen":
                         name = self.generate_variable()
                         var = ast.Var(name)
-                        exp, typ = self.generate_random_type_expression()
-                        if exp is not None:
-                            self.type_to_vars[typ].add(name)
-                            return ast.AssignInst(ast.Assign(var, exp))
+                        random.shuffle(gen_types)
+                        for typ in gen_types:
+                            exp = self.generate_expr(ast.Exp, typ)
+                            if exp is not None:
+                                self.type_to_vars[typ].add(name)
+                                self.budget[typ] -= 1
+                                return ast.AssignInst(ast.Assign(var, exp))
                     else:
                         var = random.choice(list(var_to_type.keys()))
                         typ = var_to_type[var]
@@ -126,40 +141,51 @@ class Generator:
                 raise Exception("Unexpected input " + repr(obj_type))
 
 
-    def generate_expr(self, expr, output_type):
-        if expr != ast.Exp and not self.budget[expr] > 0:
+    def generate_expr(self, expr_type, output_type):
+        if expr_type != ast.Exp and not self.budget[expr_type] > 0:
             return None
-        self.budget[expr] -= 1
-        match expr:
+        self.budget[expr_type] -= 1
+        match expr_type:
             case ast.Exp:
-                exps = [ast.Var, ast.BinOp, ast.UnaryOp, ast.Bools if output_type == ast.Bool else ast.Constant]
-                exps = [e for e in exps if self.budget[e] > 0]
-                random.shuffle(exps)
-                for exp_type in exps:
-                    e = self.generate_expr(exp_type, output_type)
-                    if e is not None:
-                        return e
-                self.budget[expr] += 1
+                choices = [ast.Var, ast.BinOp, ast.UnaryOp, ast.Bools if output_type == ast.Bool else ast.Constant]
+                choices = [e for e in choices if self.budget[e] > 0]
+                random.shuffle(choices)
+                for possible_type in choices:
+                    exp = self.generate_expr(possible_type, output_type)
+                    if exp is not None:
+                        return exp
+                self.budget[expr_type] += 1
                 return None
             case ast.Var:
                 if len(self.type_to_vars[output_type]) == 0:
-                    self.budget[expr] += 1
+                    self.budget[expr_type] += 1
                     return None
                 name = random.choice(list(self.type_to_vars[output_type]))
                 return ast.Var(name)
             case ast.Constant:
                 if output_type == ast.Bool:
-                    self.budget[expr] += 1
+                    self.budget[expr_type] += 1
                     return None
                 # TODO: Make range bigger (maybe calculate mean & variance of input program)
                 value = random.choice(list(range(1, 10)))
                 if output_type == ast.Float:
+                    if self.budget[float] <= 0:
+                        self.budget[expr_type] += 1
+                        return None
                     value = float(value)
-                return ast.Constant(value)
+                    self.budget[float] -= 1
+                    return ast.Constant(value)
+                else:
+                    if self.budget[int] <= 0:
+                        self.budget[expr_type] += 1
+                        return None
+                    self.budget[int] -= 1
+                    return ast.Constant(value)
             case ast.Bools:
-                if output_type == ast.Int or output_type == ast.Float:
-                    self.budget[expr] += 1
+                if output_type == ast.Int or output_type == ast.Float or self.budget[bool] <= 0:
+                    self.budget[expr_type] += 1
                     return None
+                self.budget[bool] -= 1
                 value = random.choice((True, False))
                 return ast.Bools(value)
             case ast.UnaryOp:
@@ -169,13 +195,13 @@ class Generator:
                     ops = list(ast.UnaryNumOperator.__subclasses__())
                 ops = [o for o in ops if self.budget[o] > 0]
                 if not ops:
-                    self.budget[expr] += 1
+                    self.budget[expr_type] += 1
                     return None
                 op = random.choice(ops)
                 self.budget[op] -= 1
                 exp = self.generate_expr(ast.Exp, output_type)
                 if exp is None:
-                    self.budget[expr] += 1
+                    self.budget[expr_type] += 1
                     self.budget[op] += 1
                     return None
                 return ast.UnaryOp(op(), exp)
@@ -187,16 +213,16 @@ class Generator:
                         bin_op = self.generate_bin_op(choice, output_type)
                         if bin_op is not None:
                             return bin_op
-                    self.budget[expr] += 1
+                    self.budget[expr_type] += 1
                     return None
                 else:
                     bin_op = self.generate_bin_op(ast.BinaryNumOperator, output_type)
                     if bin_op is not None:
                         return bin_op
-                    self.budget[expr] += 1
+                    self.budget[expr_type] += 1
                     return None
             case _:
-                raise Exception("Unexpected input " + repr(expr))
+                raise Exception("Unexpected input " + repr(expr_type))
 
     def generate_bin_op(self, bin_op_type, output_type):
         def choose_expr(types):
@@ -207,6 +233,7 @@ class Generator:
                     return expr
             return None
 
+        old_budget = self.budget.copy()
         if bin_op_type is ast.Comparator:
             ops = [c for c in ast.Comparator.__subclasses__() if self.budget[c] > 0]
             if not ops:
@@ -248,7 +275,7 @@ class Generator:
             raise Exception("Unexpected input " + repr(bin_op_type))
 
         if left is None or right is None:
-            self.budget[op] += 1
+            self.budget = old_budget
             return None
 
         return ast.BinOp(left, op(), right)

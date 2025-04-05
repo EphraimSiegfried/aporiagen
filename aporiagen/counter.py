@@ -4,7 +4,7 @@ from aporia.aporia_ast import *
 
 
 def count_variables(program:L_cfi):
-    return {d.lcfi_type: len(d.var) for d in program.declar}
+    return {type(d.lcfi_type): len(d.var) for d in program.declar}
 
 
 def count_objects(program):
