@@ -33,7 +33,7 @@ def main():
 
     if args.num_instr:
         for _ in range(args.num_progs):
-            output = Generator(num_stmts=args.num_instr).run()
+            output = Generator(num_instr=args.num_instr).run()
             generated_programs.append(str(output))
 
     print("\n\n".join(generated_programs))
