@@ -16,6 +16,7 @@ class Generator:
             self.num_instr = self.count[ast.Stmt]
         else:
             self.num_instr = num_stmts
+            self.count = defaultdict(lambda: 1000)
         self.type_to_vars = defaultdict(set)
         self.num_vars = 0
 
@@ -36,10 +37,6 @@ class Generator:
                 declarations.append(ast.Declar(typ(), variables))
 
         generated_prog = ast.L_cfi(declarations, statements)
-        gen_count = count_objects(generated_prog)
-        inp_count = count_objects(self.program_ast)
-        print(dict(gen_count))
-        print({k:inp_count[k] - gen_count[k] for k in inp_count})
         return generated_prog
 
     def generate_variable(self):
@@ -75,14 +72,14 @@ class Generator:
                 random.shuffle(inst_types)
                 for inst_type in inst_types:
                     inst = self.generate_stmt(inst_type)
-                    if obj_type is not None:
+                    if inst is not None:
                         return inst
                 self.count[obj_type] += 1
                 return None
             case ast.Pred:
                 exp_type = random.choice((ast.Bool, ast.Var))
                 if exp_type == ast.Bool or len(self.type_to_vars[ast.Bool]) == 0:
-                    return ast.Bools(True)  # TODO: Reconsider this
+                    return ast.Pred(ast.Bools(True))  # TODO: Reconsider this
                 exp = self.generate_expr(exp_type, ast.Bool)
                 if exp is None:
                     self.count[obj_type] += 1
@@ -108,19 +105,18 @@ class Generator:
                         name = self.generate_variable()
                         var = ast.Var(name)
                         exp, typ = self.generate_random_type_expression()
-                        if exp is None:
-                            self.count[obj_type] += 1
-                            return None
-                        self.type_to_vars[typ].add(name)
-                        return ast.AssignInst(ast.Assign(var, exp))
+                        if exp is not None:
+                            self.type_to_vars[typ].add(name)
+                            return ast.AssignInst(ast.Assign(var, exp))
                     else:
                         var = random.choice(list(var_to_type.keys()))
                         typ = var_to_type[var]
                         exp = self.generate_expr(ast.Exp, typ)
-                        if exp is None:
+                        if exp is not None:
                             self.count[obj_type] += 1
-                            return None
-                        return ast.AssignInst(ast.Assign(var, exp))
+                            return ast.AssignInst(ast.Assign(var, exp))
+                self.count[obj_type] += 1
+                return None
             case ast.ExpInst:
                 exp, _ = self.generate_random_type_expression()
                 if exp is None:
