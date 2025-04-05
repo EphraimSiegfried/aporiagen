@@ -3,23 +3,24 @@ from collections import defaultdict
 from types import NoneType
 
 from aporia.parser import parser
-from aporiagen.counter import count_objects, count_variables
+from aporiagen.counter import Counter
 import aporia.aporia_ast as ast
 
 
 class Generator:
-    def __init__(self, program: str = None, num_instr: int = None):
+    def __init__(self, program: str = None, num_instr: int = None, depth: int = 8):
         if not program and not num_instr:
             raise ValueError("Must provide either program or num_instr")
         if program:
             self.program_ast = parser.parse(program)
-            self.budget = count_objects(self.program_ast)
-            self.budget.update(count_variables(self.program_ast))
+            c = Counter(program_ast=self.program_ast)
+            self.budget = c.objects()
+            self.budget.update(c.variables())
             print(dict(self.budget))
             self.num_instr = self.budget[ast.Stmt]
         else:
             self.num_instr = num_instr
-            self.budget = defaultdict(lambda: 1000)
+            self.budget = defaultdict(lambda: 1000000000)
         self.type_to_vars = defaultdict(set)
         self.num_vars = 0
 
