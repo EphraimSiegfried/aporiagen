@@ -6,7 +6,7 @@ from aporia.interpreter import InterpLcfi
 def test_generated_programs():
     num_progs = 1000  # Number of random programs to test
     num_stmts = 100
-    generator = Generator(num_stmts=num_stmts)
+    generator = Generator(num_instr=num_stmts)
 
     for i in range(num_progs):
         random.seed(i)
